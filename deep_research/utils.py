@@ -129,7 +129,7 @@ GLOBAL_SUMMARIZATION_SEMAPHORE = asyncio.Semaphore(SUMMARIZATION_CONCURRENCY)
 
 # ===== SEARCH FUNCTIONS =====
 
-def tavily_search_multiple(
+async def tavily_search_multiple(
     search_queries: List[str],
     max_results: int = 3,
     topic: Literal["general", "news", "finance"] = "general",
@@ -150,28 +150,63 @@ def tavily_search_multiple(
     """
     import time
 
-    # Execute searches sequentially with timeout protection
+    # Execute searches sequentially with timeout + retry protection
     search_docs = []
     for query in search_queries:
         search_start = time.time()
-        try:
-            # Note: tavily_client.search is synchronous, so we can't use asyncio.wait_for
-            # The timeout is enforced by Tavily's internal HTTP client
-            result = tavily_client.search(
-                query,
-                max_results=max_results,
-                include_raw_content=include_raw_content,
-                topic=topic,
-                days=days
-            )
+        max_retries = 3
+        result = None
+        for attempt in range(max_retries):
+            try:
+                # Tavily SDK call is sync, so run in a thread and enforce a hard timeout.
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        tavily_client.search,
+                        query,
+                        max_results=max_results,
+                        include_raw_content=include_raw_content,
+                        topic=topic,
+                        days=days,
+                    ),
+                    timeout=TAVILY_TIMEOUT,
+                )
+                break
+            except asyncio.TimeoutError:
+                if attempt < max_retries - 1:
+                    backoff = 2 * (attempt + 1)
+                    logger.warning(
+                        f"Tavily search timeout for '{query}' after {TAVILY_TIMEOUT:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries}). Retrying in {backoff}s..."
+                    )
+                    await asyncio.sleep(backoff)
+                else:
+                    search_elapsed = time.time() - search_start
+                    logger.error(
+                        f"Tavily search timed out for '{query}' after {search_elapsed:.2f}s "
+                        f"across {max_retries} attempts"
+                    )
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    backoff = 2 * (attempt + 1)
+                    logger.warning(
+                        f"Tavily search failed for '{query}' on attempt {attempt + 1}/{max_retries}: {e}. "
+                        f"Retrying in {backoff}s..."
+                    )
+                    await asyncio.sleep(backoff)
+                else:
+                    search_elapsed = time.time() - search_start
+                    logger.error(
+                        f"Tavily search failed for '{query}' after {search_elapsed:.2f}s "
+                        f"across {max_retries} attempts: {e}"
+                    )
+
+        if result is None:
+            # Return empty result to avoid breaking the pipeline.
+            search_docs.append({'results': []})
+        else:
             search_elapsed = time.time() - search_start
             logger.debug(f"Tavily search for '{query}' completed in {search_elapsed:.2f}s")
             search_docs.append(result)
-        except Exception as e:
-            search_elapsed = time.time() - search_start
-            logger.error(f"Tavily search failed for '{query}' after {search_elapsed:.2f}s: {e}")
-            # Return empty result to avoid breaking the pipeline
-            search_docs.append({'results': []})
 
     return search_docs
 
@@ -384,7 +419,7 @@ async def tavily_search(
 
     # Execute search for single query
     logger.info(f"🔍 Executing Tavily search for query: '{query}'")
-    search_results = tavily_search_multiple(
+    search_results = await tavily_search_multiple(
         [query],  # Convert single query to list for the internal function
         max_results=max_results,
         topic=topic,
