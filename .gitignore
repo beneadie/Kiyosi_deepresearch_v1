@@ -1,0 +1,7 @@
+.env
+venv
+agent_markdowns
+.claude
+__pycache__
+benchmark_outputs
+benchmark_runner.py
