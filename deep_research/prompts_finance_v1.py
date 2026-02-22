@@ -292,6 +292,7 @@ Guide your sub-agents to gather information that will support a final report exc
 3. **Credibility**: Verifiable sources and consider the credibility of the information.
 4. **Instruction Following**: Ensure research stays targeted to the brief's objectives.
 5. **Readability**: Prefer sources with clear, well-structured information.
+6. **Citation Discipline**: Every factual claim in subagent notes must be cited. Instruct sub-agents explicitly to cite sources for every data point, quote, and substantive claim.
 </Research Quality Criteria>
 </Task>
 
@@ -330,6 +331,12 @@ Think like a research manager with limited time and resources. Follow these step
 - When delegating, explicitly ask for "recent" or \"""" + str(_previous_year - 1) + "-" + str(_current_year) + """\" (or current era) information in your sub-agent prompts.
 - If a sub-agent returns old data, you must challenge it or find a new source.
 </Date Consciousness>
+
+<Citation Expectations for Sub-Agents>
+- When delegating via ConductResearch, explicitly instruct sub-agents to cite every factual claim.
+- Example delegation: "Research X. Ensure every data point and claim in your findings has an inline citation [1], [2], etc."
+- Reject subagent outputs that have uncited paragraphs of factual content.
+</Citation Expectations for Sub-Agents>
 </Instructions>
 
 <Hard Limits>
@@ -394,26 +401,37 @@ The think_tool calls contain strategic reflections and decision-making notes tha
 1. Your output findings should be fully comprehensive and include ALL of the information and sources that the researcher has gathered from tool calls and web searches. It is expected that you repeat key information verbatim.
 2. Have a bias for giving more details and context in your report but dont make anything up.
 3. This report can be as long as necessary to return ALL of the information that the researcher has gathered.
-4. In your report, you should return inline citations for each source that the researcher found.
-5. You should include a "Sources" section at the end of the report that lists all of the sources the researcher found with corresponding citations, cited against statements in the report.
-6. Make sure to include ALL of the sources that the researcher gathered in the report, and how they were used to answer the question!
-7. It's really important not to lose any sources. A later LLM will be used to merge this report with others, so having all of the sources is critical.
-8. **Date Check**: Ensure that any dates mentioned in the source text are preserved. If a source is undated, note that. If a source is old, preserve the date so the user knows.
+4. In your report, use local note citations like [1], [2] in the findings section.
+5. You should include a "### Sources Used" section before findings that lists all sources with local IDs.
+6. Include sources that contributed to your findings or provided useful context.
+7. Multiple sources that say similar things are valuable - they strengthen the report by showing consensus.
+8. When in doubt, include the source rather than exclude it.
+9. **Date Check**: Ensure that any dates mentioned in the source text are preserved. If a source is undated, note that. If a source is old, preserve the date so the user knows.
 </Guidelines>
 
 <Output Format>
 The report should be structured like this:
+### Sources Used
+[1] Source Title: URL
+[2] Source Title: URL
+
 **List of Queries and Tool Calls Made**
 **Research Question Received**
-**Fully Comprehensive Findings** (it is okay if this is extensive. I actually want you to be comprehensive)
-**Sources** (with citations matching the findings above)
+### Findings (it is okay if this is extensive. I actually want you to be comprehensive)
+Use [1], [2], [1][3] style inline citations in this section.
 </Output Format>
 
 
 <Citation Rules>
-- Assign each unique URL a single citation number in your text
-- End with ### Sources that lists each source with corresponding numbers
-- IMPORTANT: Number sources sequentially without gaps (1,2,3,4...) in the final list regardless of which sources you choose
+- Assign each unique URL a single local source ID in your note text
+- End with ### Sources Used that lists each source with corresponding IDs
+- IMPORTANT: These are intermediate note IDs only; final user-facing numbering [1..k] is handled at final report generation
+- Before writing findings, first decide and lock your Sources Used list; then use only those locked [x] IDs inline
+
+**CITATION DENSITY REQUIREMENT:**
+- EVERY factual statement, data point, or claim in your findings MUST have an inline citation.
+- NO paragraph containing substantive information should be without citations.
+- If you write a sentence with facts and no citation, STOP and add the source ID.
 - Example format:
   [1] Source Title: URL
   [2] Source Title: URL
@@ -440,6 +458,10 @@ You should be concious of the date of the information you find and make sure to 
 
 <Output Format>
 The report should be structured like this:
+### Sources Used
+[1] Source Title: URL
+[2] Source Title: URL
+
 **Discovery Brief Received**
 [Restate what you were asked to discover]
 
@@ -448,17 +470,25 @@ The report should be structured like this:
 
 **Promising Leads Found**
 For each lead you found:
-- **Lead**: [Name/Topic]
-- **Why Promising**: [2-8 sentences on why this deserves deeper investigation and what is the potential value of this lead, as well as interesting points which may be valuable context for the next iteration of research]
+- **Lead**: [Title/Topic]
+- **Why Promising**: [comprehesive paragraph on what you found and why it deserves deeper investigation and what is the potential value of this lead, as well as interesting points which may be valuable context for the next iteration of research. Use inline local citations like [1], [2].]
 - **Sources**: [List of URLs]
-
-**Sources** (list all unique URLs found with titles)
 </Output Format>
 
 <Citation Rules>
-- Assign each unique URL a single citation number in your text
-- End with ### Sources that lists each source with corresponding numbers
-- IMPORTANT: Number sources sequentially without gaps (1,2,3,4...) in the final list
+- Assign each unique URL a single local source ID in your note text
+- End with ### Sources Used that lists each source with corresponding IDs
+- IMPORTANT: These are intermediate note IDs only; final user-facing numbering [1..k] is handled at final report generation
+- Before writing lead details, first decide and lock your Sources Used list; then use only those locked [x] IDs inline
+
+**CITATION DENSITY REQUIREMENT:**
+- EVERY "Why Promising" paragraph MUST include inline citations for the facts and observations.
+- NO lead description should have unsubstantiated claims.
+- If you describe why a lead is promising, cite the source that supports each point.
+
+**SOURCE INCLUSION GUIDELINES:**
+- Include sources that provided useful information about a lead.
+- Multiple sources supporting the same point strengthen the report - include them.
 </Citation Rules>
 
 Critical Reminder: Preserve all information that explains why a lead is promising verbatim where possible.
@@ -510,7 +540,7 @@ Instead of doing 2-5 deep searches on one focused topic, you should:
 **Substack Workflow (for expert newsletter insights):**
 1. Call `search_substack` with a SIMPLE search term (company name, product name, person name - NOT complex queries)
 2. Review the returned list of articles (titles, snippets, dates)
-3. Select 3-8 relevant articles to read (prefer ≤3 to stay efficient)
+3. Select 3-8 relevant articles to read (adjust based on task complexity)
 4. Call `read_substack_article` for each selected URL
 5. **CRITICAL**: After reading all selected articles, use `think_tool` to reflect on your findings before proceeding
 </Discovery Strategy>
@@ -673,9 +703,9 @@ For each section of the report, do the following:
 
 <Verbosity and Examples Rules>
 - **No Generalizations**: Avoid broad statements without backing them up. If you say "Regulations are tightening," you must name a specific law or country mentioned in the findings.
-- **Example Density**: Aim for at least 2-3 specific examples or "case studies" per major ## heading.
-- **Deep Dive**: If the findings contain a detailed description of an event or a product, do not summarize it into a single sentence. Give it a full paragraph (or more) to preserve the nuance.
-- **Length**: Each ## section should typically be at least 3-5 paragraphs long (aim for 300-600 words per major section).
+- **Example Density**: Aim to include multiple specific examples or "case studies" per major ## heading, unless the user requests a briefer format.
+- **Deep Dive**: If the findings contain a detailed description of an event or a product, do not summarize it into a single sentence. Give it a full paragraph (or more) to preserve the nuance. Adjust depth based on user preferences.
+- **Length**: Each ## section should typically be at least 3-5 paragraphs long (aim for 300-600 words per major section), unless the user requests a more concise summary.
 </Verbosity and Examples Rules>
 
 - Each section should follow the Helpfulness Rules.
@@ -704,15 +734,46 @@ Make sure the final answer report is in the SAME language as the human messages 
 Format the report in clear markdown with proper structure and include source references where appropriate.
 
 <Citation Rules>
-- Assign each unique URL a single citation number in your text
-- End with ### Sources that lists each source with corresponding numbers
-- Include the URL in ### Sources section only. Use the citation number in the other sections.
-- IMPORTANT: Number sources sequentially without gaps (1,2,3,4...) in the final list regardless of which sources you choose
-- Each source should be a separate line item in a list, so that in markdown it is rendered as a list.
-- Example format:
-  [1] Source Title: URL
-  [2] Source Title: URL
-- Citations are extremely important. Make sure to include these, and pay a lot of attention to getting these right. Users will often use these citations to look into more information.
+- Compile sources from the <Findings> section that support your report content.
+- Multiple sources supporting the same point strengthen the report - include them.
+- Sources that provide examples or illustrations are valuable.
+- Only exclude exact duplicate URLs (same URL appearing multiple times).
+- Assign contiguous IDs [1], [2], [3], ... to each unique URL.
+- Output a <CitationPlanList> block at the VERY START of your response with the full planned source registry.
+- Then write the report body and use only IDs that exist in your CitationPlanList.
+- End with ## Sources that mirrors your CitationPlanList exactly (same IDs and same entries).
+- Every inline citation number in the report body must exist in ## Sources.
+- Include URLs only in ## Sources (and CitationPlanList), not in report body prose.
+
+**CRITICAL CITATION DENSITY RULES:**
+- EVERY paragraph containing factual claims, data, statistics, or analysis MUST include at least one citation.
+- NO paragraph with substantive content should be without citations.
+- Aim to cite most of sources in your CitationPlanList.
+- If you write a paragraph without citations, STOP and find a source from your plan to support it.
+- Uncited paragraphs of factual content are unacceptable and will be considered a failure.
+- NEVER TRY TO PRETEND THAT A SOURCE SAID SOMETHING THAT IT DID NOT SAY. FAKING CITATIONS IS A FAIL!
+
+**SOURCE INCLUSION GUIDELINES:**
+- Multiple sources that support the same point strengthen the report - include them.
+- Sources that provide examples or illustrations are valuable.
+
+- Example output structure:
+
+<CitationPlanList>
+[1] Source Title: URL
+[2] Source Title: URL
+[3] Source Title: URL
+</CitationPlanList>
+
+## Report Title
+Body text with citations [1][3].
+
+## Sources
+[1] Source Title: URL
+[2] Source Title: URL
+[3] Source Title: URL
+
+- Citations are extremely important. Make sure to include these and keep numbering exact.
 </Citation Rules>
 """
 
@@ -797,18 +858,7 @@ REMEMBER:
 The brief and research may be in English, but you need to translate this information to the right language when writing the final answer.
 Make sure the final answer report is in the SAME language as the human messages in the message history.
 
-Format the report in clear markdown with proper structure and include source references where appropriate.
-
-<Citation Rules>
-- Assign each unique URL a single citation number in your text
-- End with ### Sources that lists each source with corresponding numbers
-- IMPORTANT: Number sources sequentially without gaps (1,2,3,4...) in the final list regardless of which sources you choose
-- Each source should be a separate line item in a list, so that in markdown it is rendered as a list.
-- Example format:
-  [1] Source Title: URL
-  [2] Source Title: URL
-- Citations are extremely important. Make sure to include these, and pay a lot of attention to getting these right. Users will often use these citations to look into more information.
-</Citation Rules>
+Format the report in clear markdown with proper structure. Do not include numbered citations in this draft stage.
 """
 
 draft_report_generation_prompt = """
@@ -878,7 +928,7 @@ For each section of the report, do the following:
 
 - Each section should be as long as necessary to deeply answer the question with the information you have gathered. It is expected that sections will be fairly long and verbose. You are writing a deep research report, and users will expect a thorough answer.
 - **Draw on Examples**: Use your internal knowledge to provide illustrative examples or historical parallels that clarify the concepts in the Strategic Plan. These help set the stage for the specific research findings later.
-- Carefully suporting claims, arguments and analysis with citations and examples is essential.
+- Carefully supporting claims, arguments and analysis with clear reasoning and examples is essential.
 - Use bullet points to list out information when appropriate, but by default, write in paragraph form.
 
 <Quality Pillars>
@@ -895,18 +945,7 @@ REMEMBER:
 The brief and research may be in English, but you need to translate this information to the right language when writing the final answer.
 Make sure the final answer report is in the SAME language as the human messages in the message history.
 
-Format the report in clear markdown with proper structure and include source references where appropriate.
-
-<Citation Rules>
-- Assign each unique URL a single citation number in your text
-- End with ### Sources that lists each source with corresponding numbers
-- IMPORTANT: Number sources sequentially without gaps (1,2,3,4...) in the final list regardless of which sources you choose
-- Each source should be a separate line item in a list, so that in markdown it is rendered as a list.
-- Example format:
-  [1] Source Title: URL
-  [2] Source Title: URL
-- Citations are extremely important. Make sure to include these, and pay a lot of attention to getting these right. Users will often use these citations to look into more information.
-</Citation Rules>
+Format the report in clear markdown with proper structure. Do not include numbered citations in this draft stage.
 """
 
 report_planning_prompt = """

@@ -182,6 +182,12 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
         for tool_call in most_recent_message.tool_calls
     )
 
+    # Check if there are research calls in the same turn
+    has_research_calls = any(
+        tool_call["name"] in ("ConductResearch", "DiscoverOpportunities")
+        for tool_call in most_recent_message.tool_calls
+    )
+
     # Calculate elapsed minutes for hard stop check
     start_time = state.get("start_time", 0.0)
     elapsed_minutes = 0.0
@@ -190,13 +196,19 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
 
     exceeded_time = elapsed_minutes >= RESEARCH_STRICT_TIMEOUT_MINUTES
 
-    if exceeded_iterations or no_tool_calls or research_complete or exceeded_time:
+    # Exit if: exceeded limits OR no calls OR (ResearchComplete WITHOUT research calls)
+    if exceeded_iterations or no_tool_calls or exceeded_time or (research_complete and not has_research_calls):
         if exceeded_time:
              print(f"\n{Colors.RED}Hard stop triggered: Research exceeded {RESEARCH_STRICT_TIMEOUT_MINUTES} minutes limit.{Colors.RESET}")
         should_end = True
         next_step = END
 
     else:
+        # This includes: (1) normal tool calls, (2) ResearchComplete WITH research calls (salvage case)
+        if research_complete and has_research_calls:
+            # Incorrect tool call combination - ignore ResearchComplete and continue
+            print(f"\n{Colors.YELLOW}[Warning] ResearchComplete called with research tools - ignoring ResearchComplete, continuing research.{Colors.RESET}")
+
         # Execute ALL tool calls before deciding next step
         try:
             # Separate think_tool calls from ConductResearch calls

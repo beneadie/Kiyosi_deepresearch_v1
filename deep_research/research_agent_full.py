@@ -45,6 +45,85 @@ subtopic_tools = [GenerateSubtopicReport, EndSubtopicEvaluation]
 # Note: Tools bound to each model in the fallback chain
 resilient_subtopic_model = get_resilient_model(tools=subtopic_tools, max_tokens=40000)
 
+
+def _strip_citation_plan_list(report_text: str) -> str:
+    """Remove optional CitationPlanList scaffolding block from report text."""
+    return re.sub(
+        r"(?is)<CitationPlanList>.*?</CitationPlanList>\s*",
+        "",
+        report_text,
+    ).strip()
+
+
+def _split_report_sections(report_text: str) -> tuple[str | None, str | None]:
+    """Split report into body and sources block using the ##/### Sources header."""
+    normalized_report = _strip_citation_plan_list(report_text)
+    sources_header_match = re.search(r"(?im)^###{0,1}\s+Sources\s*$", normalized_report)
+    if not sources_header_match:
+        return None, None
+
+    body = normalized_report[:sources_header_match.start()].rstrip()
+    raw_sources_block = normalized_report[sources_header_match.end():]
+    return body, raw_sources_block
+
+
+def citations_match_sources(report_text: str) -> bool:
+    """Validate inline numeric citations against the sources section."""
+    body, raw_sources_block = _split_report_sections(report_text)
+    if body is None or raw_sources_block is None:
+        return False
+
+    body_ids = [int(m.group(1)) for m in re.finditer(r"\[(\d{1,3})\]", body)]
+    source_ids = []
+    for line in raw_sources_block.splitlines():
+        match = re.match(r"^\[(\d+)\]\s*(.*)$", line.strip())
+        if not match:
+            continue
+        if re.search(r"https?://\S+", match.group(2)):
+            source_ids.append(int(match.group(1)))
+
+    if not body_ids or not source_ids:
+        return False
+
+    body_set = set(body_ids)
+    source_set = set(source_ids)
+    return body_set.issubset(source_set) and source_set == set(range(1, len(source_set) + 1))
+
+
+async def llm_repair_citations(report_text: str, findings_text: str) -> str:
+    """Single LLM repair pass for citation/source consistency issues."""
+    system_prompt = (
+        "You are a citation repair engine. "
+        "Fix only inline numeric citations, the optional <CitationPlanList>, and the ##/### Sources list."
+    )
+    human_prompt = f"""
+Repair citation numbering consistency in this markdown report.
+
+Rules:
+1) Keep original prose, structure, and language unchanged as much as possible.
+2) Renumber inline citations to contiguous [1], [2], ...
+3) Ensure every inline citation appears in ## Sources (or ### Sources).
+4) Keep ## Sources or ### Sources at the end of the report.
+5) If <CitationPlanList> exists, ensure it mirrors ##/### Sources exactly (same IDs and entries).
+6) Unused sources are allowed in Sources/CitationPlanList, but numbering must remain contiguous in Sources.
+7) Use Findings Context only to recover or verify missing/incorrect source entries; do not rewrite argumentation.
+8) Output ONLY the cleaned markdown report.
+
+<Findings Context>
+{findings_text}
+</Findings Context>
+
+<Report>
+{report_text}
+</Report>
+"""
+
+    response = await resilient_writer.ainvoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=human_prompt),
+    ])
+    return extract_text_from_response(response.content)
+
 # ===== FINAL REPORT GENERATION =====
 
 async def final_report_generation(state: AgentState):
@@ -81,6 +160,32 @@ async def final_report_generation(state: AgentState):
 
     # Use the robust extraction utility for the final report content
     report_content = extract_text_from_response(final_report.content)
+    if citations_match_sources(report_content):
+        print("[Final Report] citation_validation_passed")
+        final_report_content = report_content
+    else:
+        print("[Final Report] citation_validation_failed")
+        print("[Final Report] citation_repair_invoked")
+        print("[Final Report] citation_repair_context=findings")
+        repaired_report_content = await llm_repair_citations(report_content, findings)
+
+        original_body, _ = _split_report_sections(report_content)
+        repaired_body, _ = _split_report_sections(repaired_report_content)
+        repaired_valid = citations_match_sources(repaired_report_content)
+        body_length_sane = (
+            bool(repaired_body)
+            and bool(original_body)
+            and len(repaired_body) >= int(0.6 * len(original_body))
+        )
+
+        if repaired_report_content.strip() and repaired_valid and body_length_sane:
+            print("[Final Report] citation_repair_accepted")
+            final_report_content = repaired_report_content
+        else:
+            print("[Final Report] citation_repair_rejected")
+            final_report_content = report_content
+
+    report_content = _strip_citation_plan_list(final_report_content)
 
     if SAVE_REPORT_TO_FILE:
         filename = f"Final_Report_{get_today_str().replace(' ', '_').replace(',', '')}.md"

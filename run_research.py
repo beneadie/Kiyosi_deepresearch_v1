@@ -165,6 +165,7 @@ async def run_research(prompt: str, output_dir: Path, thread_id: str = None, cle
 
         # Write to file if enabled
         if OUTPUT_MODE in ("file", "both"):
+            output_file.parent.mkdir(parents=True, exist_ok=True)
             with open(output_file, "w", encoding="utf-8") as f:
                 if not clean_output:
                     f.write("# Deep Research Report\n\n")
@@ -204,6 +205,7 @@ async def run_research(prompt: str, output_dir: Path, thread_id: str = None, cle
                 "sources": sources,
                 "final_report": final_report
             }
+            sources_json_file.parent.mkdir(parents=True, exist_ok=True)
             with open(sources_json_file, "w", encoding="utf-8") as f:
                 json.dump(research_data, f, indent=2, ensure_ascii=False)
             logger.info(f"Sources saved to: {sources_json_file} ({len(sources)} sources)")
@@ -263,6 +265,7 @@ SUPERVISOR REACTION:
             # Write trace file ONLY if file output is enabled
             if OUTPUT_MODE in ("file", "both") and trace_content:
                 trace_file = output_dir / f"trace_{timestamp}.md"
+                trace_file.parent.mkdir(parents=True, exist_ok=True)
                 with open(trace_file, "w", encoding="utf-8") as f:
                     f.write(trace_content)
                 logger.info(f"Research trace saved to: {trace_file}")
@@ -291,6 +294,7 @@ SUPERVISOR REACTION:
 
         # Save error to file for debugging
         error_file = output_dir / f"error_{timestamp}.txt"
+        error_file.parent.mkdir(parents=True, exist_ok=True)
         with open(error_file, "w", encoding="utf-8") as f:
             f.write(f"Error occurred at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             f.write(f"Prompt:\n{prompt}\n\n")
