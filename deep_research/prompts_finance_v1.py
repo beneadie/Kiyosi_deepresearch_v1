@@ -738,6 +738,10 @@ Format the report in clear markdown with proper structure and include source ref
 - Multiple sources supporting the same point strengthen the report - include them.
 - Sources that provide examples or illustrations are valuable.
 - Only exclude exact duplicate URLs (same URL appearing multiple times).
+- **PLAN YOUR CITATION ORDER**: Before writing CitationPlanList, think through your report structure.
+Order sources by when they will FIRST appear in your report.
+Sources for the introduction/overview should have lower numbers; sources for later sections should have higher numbers.
+This creates a natural citation flow.
 - Assign contiguous IDs [1], [2], [3], ... to each unique URL.
 - Output a <CitationPlanList> block at the VERY START of your response with the full planned source registry.
 - Then write the report body and use only IDs that exist in your CitationPlanList.

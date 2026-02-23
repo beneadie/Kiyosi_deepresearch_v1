@@ -90,8 +90,34 @@ def citations_match_sources(report_text: str) -> bool:
     return body_set.issubset(source_set) and source_set == set(range(1, len(source_set) + 1))
 
 
+async def _extract_sources_from_findings(findings_text: str, max_chars: int) -> str:
+    """Extract just the Sources sections from findings to reduce context size."""
+    # Pattern matches ### Sources Used or ## Sources sections
+    pattern = r"(?im)^#{2,3}\s+Sources.*?(?=\n#{2,3}\s|\Z)"
+    sources_sections = re.findall(pattern, findings_text, re.DOTALL)
+
+    if sources_sections:
+        combined = "\n\n".join(sources_sections)
+        if len(combined) <= max_chars:
+            return combined
+        # If still too long, truncate but keep structure
+        return combined[:max_chars] + "\n... [truncated]"
+
+    # Fallback: just truncate the full findings
+    return findings_text[:max_chars] + "\n... [truncated]"
+
+
 async def llm_repair_citations(report_text: str, findings_text: str) -> str:
-    """Single LLM repair pass for citation/source consistency issues."""
+    """Single LLM repair pass for citation/source consistency issues.
+
+    Includes timeout protection and findings truncation to prevent hanging.
+    """
+    # Truncate findings to reasonable size - only need source URLs, not full content
+    max_findings_chars = 35000  # ~8-10K tokens, leaves room for report
+    if len(findings_text) > max_findings_chars:
+        print(f"[Final Report] Truncating findings from {len(findings_text)} to {max_findings_chars} chars")
+        findings_text = await _extract_sources_from_findings(findings_text, max_findings_chars)
+
     system_prompt = (
         "You are a citation repair engine. "
         "Fix only inline numeric citations, the optional <CitationPlanList>, and the ##/### Sources list."
@@ -118,11 +144,21 @@ Rules:
 </Report>
 """
 
-    response = await resilient_writer.ainvoke([
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=human_prompt),
-    ])
-    return extract_text_from_response(response.content)
+    try:
+        response = await asyncio.wait_for(
+            resilient_writer.ainvoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=human_prompt),
+            ]),
+            timeout=180.0  # 3 minute timeout
+        )
+        return extract_text_from_response(response.content)
+    except asyncio.TimeoutError:
+        print("[Final Report] citation_repair_timeout")
+        return ""  # Empty string will trigger rejection logic in caller
+    except Exception as e:
+        print(f"[Final Report] citation_repair_error: {e}")
+        return ""
 
 # ===== FINAL REPORT GENERATION =====
 
