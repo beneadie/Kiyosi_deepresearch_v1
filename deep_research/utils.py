@@ -27,6 +27,11 @@ from deep_research.observability import log_source
 import logging
 logger = logging.getLogger(__name__)
 
+# ANSI color codes for tool-specific log highlighting
+_ORANGE = "\033[38;5;208m"  # Orange for Substack
+_DARK_ORANGE = "\033[38;5;166m"  # Dark orange/red for Reddit
+_RESET = "\033[0m"
+
 def extract_text_from_response(content) -> str:
     """
     Safely extract text from a model response, handling different provider formats.
@@ -399,15 +404,15 @@ def format_search_output(summarized_results: dict) -> str:
 @tool(parse_docstring=True)
 async def tavily_search(
     query: str,
-    max_results: Annotated[int, InjectedToolArg] = 3,
-    topic: Annotated[Literal["general", "news", "finance"], InjectedToolArg] = "general",
+    max_results: int = 6,
+    topic: Annotated[Literal["general", "news", "finance", "environment", "technology"], InjectedToolArg] = "general",
     days: Annotated[Optional[int], InjectedToolArg] = None,
 ) -> str:
     """Fetch results from Tavily search API with content summarization.
 
     Args:
         query: A single search query to execute
-        max_results: Maximum number of results to return
+        max_results: Number of results to return (default 6). Can be increased up to 20 if needed.
         topic: Topic to filter results by ('general', 'news', 'finance')
         days: Limit results to the last N days. Use this for time-sensitive queries or market data.
 
@@ -416,6 +421,7 @@ async def tavily_search(
     """
     import time
     search_start = time.time()
+    max_results = min(max(max_results, 1), 20)  # Clamp to Tavily's 1-20 range
 
     # Execute search for single query
     logger.info(f"🔍 Executing Tavily search for query: '{query}'")
@@ -444,10 +450,10 @@ async def tavily_search(
     return format_search_output(summarized_results)
 
 @tool(parse_docstring=True)
-def think_tool(reflection: str) -> str:
+async def think_tool(reflection: str) -> str:
     """Tool for strategic reflection on research progress and decision-making.
 
-    Use this tool after each search to analyze results and plan next steps systematically.
+    You can use this tool after searches to analyze results and plan next steps systematically.
     This creates a deliberate pause in the research workflow for quality decision-making.
 
     When to use:
@@ -648,7 +654,7 @@ async def get_subreddit_posts(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 DeepResearchAgent/1.0"
     }
 
-    logger.info(f"🔍 Fetching up to {limit} {listing} posts from r/{subreddit}")
+    logger.info(f"🔍 Fetching up to {limit} {listing} posts from {_DARK_ORANGE}Reddit{_RESET} r/{subreddit}")
 
     all_posts = []
     after_token = None
@@ -766,7 +772,7 @@ async def get_reddit_post(url: str) -> str:
     import time
 
     start_time = time.time()
-    logger.info(f"🔍 Fetching Reddit post: {url}")
+    logger.info(f"🔍 Fetching {_DARK_ORANGE}Reddit{_RESET} post: {url}")
 
     # Reddit requires a custom User-Agent to avoid 429 errors
     headers = {
@@ -867,7 +873,7 @@ async def get_reddit_post(url: str) -> str:
             output.append(f"... and {len(comments_data) - 25} more top-level comments")
 
         elapsed = time.time() - start_time
-        logger.info(f"✓ Reddit post fetched in {elapsed:.2f}s ({len(comments_data)} top-level comments)")
+        logger.info(f"✓ {_DARK_ORANGE}Reddit{_RESET} post fetched in {elapsed:.2f}s ({len(comments_data)} top-level comments)")
 
         formatted_output = "\n".join(output)
 
@@ -935,7 +941,7 @@ async def search_term_in_subreddit(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 DeepResearchAgent/1.0"
     }
 
-    logger.info(f"🔍 Searching Reddit for '{query}' (limit: {limit}, sort: {sort}, time: {time_filter})")
+    logger.info(f"🔍 Searching {_DARK_ORANGE}Reddit{_RESET} for '{query}' (limit: {limit}, sort: {sort}, time: {time_filter})")
 
     all_posts = []
     after_token = None
@@ -1164,7 +1170,7 @@ async def search_substack(
     import time
 
     start_time = time.time()
-    logger.info(f"🔍 Searching Substack for: '{search_term}' (recency: {recency_filter})")
+    logger.info(f"🔍 Searching {_ORANGE}Substack{_RESET} for: '{search_term}' (recency: {recency_filter})")
 
     try:
         results_data = await _search_perplexity_substack(search_term, recency_filter)
@@ -1205,7 +1211,7 @@ async def search_substack(
         output.append("\nTo read an article, call: read_substack_article(url=\"<URL>\")")
 
         elapsed = time.time() - start_time
-        logger.info(f"✓ Substack search completed in {elapsed:.2f}s ({len(substack_results)} results)")
+        logger.info(f"✓ {_ORANGE}Substack{_RESET} search completed in {elapsed:.2f}s ({len(substack_results)} results)")
 
         formatted_output = "\n".join(output)
 
@@ -1242,7 +1248,7 @@ async def read_substack_article(url: str) -> str:
     import time
 
     start_time = time.time()
-    logger.info(f"📖 Reading Substack article: {url}")
+    logger.info(f"📖 Reading {_ORANGE}Substack{_RESET} article: {url}")
 
     try:
         data = await _scrape_substack(url)
@@ -1263,7 +1269,7 @@ async def read_substack_article(url: str) -> str:
         output.append("\n---")
 
         elapsed = time.time() - start_time
-        logger.info(f"✓ Substack article read in {elapsed:.2f}s ({len(data['content'])} chars)")
+        logger.info(f"✓ {_ORANGE}Substack{_RESET} article read in {elapsed:.2f}s ({len(data['content'])} chars)")
 
         formatted_output = "\n".join(output)
 

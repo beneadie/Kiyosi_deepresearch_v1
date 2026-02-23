@@ -35,6 +35,9 @@ RESEARCH_STRICT_TIMEOUT_MINUTES = RESEARCH_TIME_MAX_MINUTES + 2.0  # Hard stop l
 # Maximum number of research iterations (tool calls)
 MAX_RESEARCHER_ITERATIONS = 15
 
+# Per-subagent time limit (seconds) - graceful stop; agent finishes current iteration then compresses
+SUBAGENT_TIMEOUT_SECONDS = 600  # 10 minutes
+
 # Optional: Set max tokens for writer models (None = no limit)
 DEFAULT_MAX_TOKENS = None  # Previously was 32000-40000, now unlimited
 

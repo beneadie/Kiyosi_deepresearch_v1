@@ -23,7 +23,11 @@ from deep_research.prompts import (
     compress_discovery_system_prompt,
     compress_discovery_human_message
 )
-from deep_research.config import get_primary_model, get_writer_model, get_lite_model, get_resilient_model
+from deep_research.config import get_primary_model, get_writer_model, get_lite_model, get_resilient_model, SUBAGENT_TIMEOUT_SECONDS
+import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ===== CONFIGURATION =====
 
@@ -76,9 +80,10 @@ async def llm_call(state: ResearcherState):
     # The model already has fallbacks configured
     response = await model.ainvoke(messages)
 
-    return {
-        "researcher_messages": [response]
-    }
+    updates = {"researcher_messages": [response]}
+    if not state.get("start_time"):
+        updates["start_time"] = time.time()
+    return updates
 
 async def tool_node(state: ResearcherState):
     """Execute all tool calls from the previous LLM response.
@@ -158,7 +163,7 @@ def should_continue(state: ResearcherState) -> Literal["tool_node", "compress_re
     """Determine whether to continue research or provide final answer.
 
     Determines whether the agent should continue the research loop or provide
-    a final answer based on whether the LLM made tool calls.
+    a final answer based on whether the LLM made tool calls and time limits.
 
     Returns:
         "tool_node": Continue to tool execution
@@ -166,6 +171,12 @@ def should_continue(state: ResearcherState) -> Literal["tool_node", "compress_re
     """
     messages = state["researcher_messages"]
     last_message = messages[-1]
+
+    # Hard time limit - force stop if subagent has been running too long
+    start_time = state.get("start_time", 0)
+    if start_time and (time.time() - start_time) > SUBAGENT_TIMEOUT_SECONDS:
+        logger.warning(f"Subagent exceeded {SUBAGENT_TIMEOUT_SECONDS}s time limit. Forcing compression.")
+        return "compress_research"
 
     # If the LLM makes a tool call, continue to tool execution
     if last_message.tool_calls:

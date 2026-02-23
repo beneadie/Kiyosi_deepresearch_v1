@@ -956,7 +956,7 @@ After you have thought, the next step in the process will be the drafting of a d
 Your plan should account for the fact that the LLM writing the draft report will not have access to the internet.
 It is likely that you will need to rely on the most up to date information for the task so a plan should be created that accounts for this.
 Your plan will need to inform the llm which writes the draft report that it needs to account for what it couldnt possibly know.
-The LLM writing the draft needs to be aware that its training data likely ends in 2023 or 2024, so couldnt possibly be aware of recent events or data.
+The LLM writing the draft needs to be aware that its training data likely ends in 2024 (today's date is {date}), so couldnt possibly be aware of recent events or data.
 It is likely that you could be asked about things like the price of a stock, or the most recent technology. We need this to be double checked with reliable sources that are extremely up to date. An article written a few months ago will likely be massively out of date.
 
 

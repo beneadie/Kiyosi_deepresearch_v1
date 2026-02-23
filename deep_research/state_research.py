@@ -28,6 +28,7 @@ class ResearcherState(TypedDict):
     compressed_research: str
     raw_notes: Annotated[List[str], operator.add]
     search_queries: Annotated[List[str], operator.add]
+    start_time: float
     agent_type: str = "researcher"
 
 class ResearcherOutputState(TypedDict):

@@ -11,8 +11,11 @@ maintaining isolated context windows for each research topic.
 """
 
 import asyncio
+import logging
 
 from typing_extensions import Literal
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.messages import (
     HumanMessage,
@@ -33,7 +36,7 @@ from deep_research.state_multi_agent_supervisor import (
     DiscoverOpportunities
 )
 from deep_research.utils import get_today_str, think_tool, refine_draft_report
-from deep_research.config import get_primary_model, RESEARCH_STRICT_TIMEOUT_MINUTES, MAX_RESEARCHER_ITERATIONS, get_resilient_model
+from deep_research.config import get_primary_model, RESEARCH_STRICT_TIMEOUT_MINUTES, MAX_RESEARCHER_ITERATIONS, SUBAGENT_TIMEOUT_SECONDS, get_resilient_model
 import time
 from deep_research.observability import log_conductor_turn, log_sub_agent, log_trace_delegation, log_trace_findings, log_trace_supervisor_reaction
 from deep_research.console_logger import Colors
@@ -211,7 +214,7 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
 
         # Execute ALL tool calls before deciding next step
         try:
-            # Separate think_tool calls from ConductResearch calls
+            # Separate tool calls by type
             think_tool_calls = [
                 tool_call for tool_call in most_recent_message.tool_calls
                 if tool_call["name"] == "think_tool"
@@ -232,9 +235,9 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
                 if tool_call["name"] == "DiscoverOpportunities"
             ]
 
-            # Handle think_tool calls (synchronous)
+            # Handle think_tool calls (async — calls LLM for strategic analysis)
             for tool_call in think_tool_calls:
-                observation = think_tool.invoke(tool_call["args"])
+                observation = await think_tool.ainvoke(tool_call["args"])
                 # Log supervisor's reaction for research trace
                 log_trace_supervisor_reaction(tool_call["args"].get("reflection", ""))
                 tool_messages.append(
@@ -245,40 +248,79 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
                     )
                 )
 
-            # Handle ConductResearch calls (asynchronous)
+            # Launch ConductResearch and DiscoverOpportunities concurrently
+            # Build coroutines for both types, gather them together, then process results
+
+            # Prepare ConductResearch coroutines
+            agent_ids = []
+            trace_indices = []
+            research_coros = []
             if conduct_research_calls:
-                # Log sub-agents starting
-                agent_ids = []
-                trace_indices = []  # Track trace indices for each delegation
                 for tool_call in conduct_research_calls:
                     agent_id = console_logger.log_sub_agent_start(tool_call["args"]["research_topic"])
                     agent_ids.append(agent_id)
-                    # Log delegation for research trace
                     trace_idx = log_trace_delegation(tool_call["args"]["research_topic"])
                     trace_indices.append(trace_idx)
 
-
-                # Launch parallel research agents
-                coros = [
-                    researcher_agent.ainvoke({
-                        "researcher_messages": [
-                            HumanMessage(content=tool_call["args"]["research_topic"])
-                        ],
-                        "research_topic": tool_call["args"]["research_topic"]
-                    })
+                research_coros = [
+                    asyncio.wait_for(
+                        researcher_agent.ainvoke({
+                            "researcher_messages": [
+                                HumanMessage(content=tool_call["args"]["research_topic"])
+                            ],
+                            "research_topic": tool_call["args"]["research_topic"]
+                        }),
+                        timeout=SUBAGENT_TIMEOUT_SECONDS + 30
+                    )
                     for tool_call in conduct_research_calls
                 ]
 
-                # Wait for all research to complete
-                tool_results = await asyncio.gather(*coros)
+            # Prepare DiscoverOpportunities coroutines
+            discovery_agent_ids = []
+            discovery_trace_indices = []
+            discovery_coros = []
+            if discover_opportunities_calls:
+                for tool_call in discover_opportunities_calls:
+                    agent_id = console_logger.log_discovery_start(tool_call["args"]["discovery_brief"])
+                    discovery_agent_ids.append(agent_id)
+                    trace_idx = log_trace_delegation("Discovery: " + tool_call["args"]["discovery_brief"])
+                    discovery_trace_indices.append(trace_idx)
 
-                # Format research results as tool messages
-                # Each sub-agent returns compressed research findings in result["compressed_research"]
-                # We write this compressed research as the content of a ToolMessage, which allows
-                # the supervisor to later retrieve these findings via get_notes_from_tool_calls()
+                discovery_coros = [
+                    asyncio.wait_for(
+                        researcher_agent.ainvoke({
+                            "researcher_messages": [
+                                HumanMessage(content=discovery_agent_prompt + tool_call["args"]["discovery_brief"])
+                            ],
+                            "research_topic": "Discovery: " + tool_call["args"]["discovery_brief"],
+                            "agent_type": "discovery"
+                        }),
+                        timeout=SUBAGENT_TIMEOUT_SECONDS + 30
+                    )
+                    for tool_call in discover_opportunities_calls
+                ]
+
+            # Run all research + discovery agents concurrently
+            all_coros = research_coros + discovery_coros
+            if all_coros:
+                all_results = await asyncio.gather(*all_coros, return_exceptions=True)
+            else:
+                all_results = []
+
+            # Split results back into research and discovery
+            tool_results = all_results[:len(research_coros)]
+            discovery_results = all_results[len(research_coros):]
+
+            # Process ConductResearch results
+            if conduct_research_calls:
                 research_tool_messages = []
                 for i, (result, tool_call) in enumerate(zip(tool_results, conduct_research_calls)):
-                    compressed = result.get("compressed_research", "Error synthesizing research report")
+                    if isinstance(result, BaseException):
+                        topic = tool_call["args"]["research_topic"]
+                        logger.warning(f"Subagent timed out or failed for topic: {topic} - {result}")
+                        compressed = f"Research timed out for this topic: {topic}"
+                    else:
+                        compressed = result.get("compressed_research", "Error synthesizing research report")
                     research_tool_messages.append(
                         ToolMessage(
                             content=compressed,
@@ -286,29 +328,58 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
                             tool_call_id=tool_call["id"]
                         )
                     )
-                    # Log each sub-agent for observability
+                    search_queries = result.get("search_queries", []) if not isinstance(result, BaseException) else []
                     log_sub_agent(
                         research_topic=tool_call["args"]["research_topic"],
                         system_prompt="(see research_agent.py for sub-agent prompt)",
                         compressed_research=compressed,
                         agent_type="research_agent",
-                        search_queries=result.get("search_queries", [])
+                        search_queries=search_queries
                     )
-                    # Log findings for research trace
                     if i < len(trace_indices):
                         log_trace_findings(trace_indices[i], compressed)
-                    # Console log completion
                     if i < len(agent_ids):
-                        console_logger.log_sub_agent_complete(agent_ids[i], len(result.get("search_queries", [])))
+                        console_logger.log_sub_agent_complete(agent_ids[i], len(search_queries))
 
                 tool_messages.extend(research_tool_messages)
 
-                # Aggregate raw notes from all research
                 all_raw_notes = [
                     "\n".join(result.get("raw_notes", []))
-                    for result in tool_results
+                    for result in tool_results if not isinstance(result, BaseException)
                 ]
 
+            # Process DiscoverOpportunities results
+            if discover_opportunities_calls:
+                for i, (result, tool_call) in enumerate(zip(discovery_results, discover_opportunities_calls)):
+                    if isinstance(result, BaseException):
+                        brief = tool_call["args"]["discovery_brief"]
+                        logger.warning(f"Discovery agent timed out or failed for: {brief} - {result}")
+                        compressed = f"Discovery timed out for: {brief}"
+                    else:
+                        compressed = result.get("compressed_research", "No discoveries found")
+                    tool_messages.append(
+                        ToolMessage(
+                            content=compressed,
+                            name=tool_call["name"],
+                            tool_call_id=tool_call["id"]
+                        )
+                    )
+                    search_queries = result.get("search_queries", []) if not isinstance(result, BaseException) else []
+                    log_sub_agent(
+                        research_topic="Discovery: " + tool_call["args"]["discovery_brief"],
+                        system_prompt=discovery_agent_prompt,
+                        compressed_research=compressed,
+                        agent_type="discovery_agent",
+                        search_queries=search_queries
+                    )
+                    # Log findings for research trace
+                    if i < len(discovery_trace_indices):
+                        log_trace_findings(discovery_trace_indices[i], compressed)
+                    # Console log completion
+                    if i < len(discovery_agent_ids):
+                        console_logger.log_discovery_complete(discovery_agent_ids[i], len(search_queries))
+
+            # Handle refine_draft_report calls (after research + discovery results are collected)
             for tool_call in refine_report_calls:
               console_logger.log_refine_start()
               notes = get_notes_from_tool_calls(supervisor_messages)
@@ -328,55 +399,6 @@ async def supervisor_tools(state: SupervisorState) -> Command[Literal["superviso
                 )
               )
               console_logger.log_refine_complete()
-
-            # Handle DiscoverOpportunities calls (asynchronous)
-            if discover_opportunities_calls:
-                # Log discovery agents starting
-                discovery_agent_ids = []
-                discovery_trace_indices = []  # Track trace indices for each discovery delegation
-                for tool_call in discover_opportunities_calls:
-                    agent_id = console_logger.log_discovery_start(tool_call["args"]["discovery_brief"])
-                    discovery_agent_ids.append(agent_id)
-                    # Log delegation for research trace (prefix with "Discovery:" to distinguish)
-                    trace_idx = log_trace_delegation("Discovery: " + tool_call["args"]["discovery_brief"])
-                    discovery_trace_indices.append(trace_idx)
-
-                # Reuse researcher_agent but with discovery-focused prompt from prompts module
-                discovery_coros = [
-                    researcher_agent.ainvoke({
-                        "researcher_messages": [
-                            HumanMessage(content=discovery_agent_prompt + tool_call["args"]["discovery_brief"])
-                        ],
-                        "research_topic": "Discovery: " + tool_call["args"]["discovery_brief"],
-                        "agent_type": "discovery"
-                    })
-                    for tool_call in discover_opportunities_calls
-                ]
-
-                discovery_results = await asyncio.gather(*discovery_coros)
-
-                for i, (result, tool_call) in enumerate(zip(discovery_results, discover_opportunities_calls)):
-                    compressed = result.get("compressed_research", "No discoveries found")
-                    tool_messages.append(
-                        ToolMessage(
-                            content=compressed,
-                            name=tool_call["name"],
-                            tool_call_id=tool_call["id"]
-                        )
-                    )
-                    log_sub_agent(
-                        research_topic="Discovery: " + tool_call["args"]["discovery_brief"],
-                        system_prompt=discovery_agent_prompt,
-                        compressed_research=compressed,
-                        agent_type="discovery_agent",
-                        search_queries=result.get("search_queries", [])
-                    )
-                    # Log findings for research trace
-                    if i < len(discovery_trace_indices):
-                        log_trace_findings(discovery_trace_indices[i], compressed)
-                    # Console log completion
-                    if i < len(discovery_agent_ids):
-                        console_logger.log_discovery_complete(discovery_agent_ids[i], len(result.get("search_queries", [])))
 
 
         except Exception as e:
