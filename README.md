@@ -4,7 +4,7 @@ Multi-agent research pipeline built with LangGraph + LangChain. It takes a promp
 
 ## What this project does
 
-- Converts a user prompt into a structured research brief and report plan
+- Converts a user prompt into a structured research brief
 - Runs a supervisor + researcher agent loop for evidence gathering
 - Produces a final markdown report
 - Optionally exports source metadata and a research trace
@@ -144,16 +144,123 @@ Check:
 
 This repo includes a fix that makes draft generation async + timeout based, and avoids structured output wrapping for long drafts.
 
-## Quick architecture
+## Agent Flow
 
-Note: `clarify_with_user` is currently not enabled for real clarification behavior and acts as a dummy pass-through call to `write_research_brief`.
+The system uses a **diffusion-based approach**: generate a loose draft from internal knowledge, then iteratively refine it with real research. The architecture is a hierarchical multi-agent system built with LangGraph.
 
-Pipeline order:
+### High-level pipeline
 
-1. `clarify_with_user`
-2. `write_research_brief`
-3. `plan_report`
-4. `write_draft_report`
-5. `supervisor_subgraph`
-6. `final_report_generation`
-7. optional: `subtopic_evaluation` -> `subtopic_generation`
+```
+User Query
+  |
+  v
+clarify_with_user          (pass-through; clarification logic currently disabled)
+  |
+  v
+write_research_brief       (LLM converts conversation into a detailed research brief)
+  |
+  v
+write_draft_report         (LLM writes an initial draft from internal knowledge only)
+  |
+  v
+supervisor_subgraph        (iterative research + draft refinement loop)
+  |
+  v
+final_report_generation    (synthesizes findings + draft into a citation-backed report)
+  |
+  v
+subtopic_evaluation        (optional; decides if supplementary reports are needed)
+  |
+  v
+subtopic_generation        (optional; generates detailed subtopic reports in parallel)
+```
+
+**Files**: `research_agent_scope.py` (scoping nodes), `research_agent_full.py` (full graph wiring).
+
+### Stage 1 -- Scoping
+
+| Node | What it does | Output |
+|---|---|---|
+| `clarify_with_user` | Placeholder for user clarification (currently skipped). | Routes to `write_research_brief`. |
+| `write_research_brief` | Translates raw user messages into a concrete, detailed research brief using structured output. | `research_brief` string stored in state. |
+| `write_draft_report` | Generates an initial draft report from the LLM's internal knowledge, guided only by the research brief. No citations -- uses `[RESEARCH_NEEDED]` placeholders where data is missing. | `draft_report` string stored in state, plus `supervisor_messages` seeded with the draft and brief. |
+
+### Stage 2 -- Supervisor research loop
+
+**File**: `multi_agent_supervisor.py`
+
+The supervisor is a looping subgraph that coordinates parallel sub-agents:
+
+```
+supervisor  <-->  supervisor_tools
+   |                  |
+   |     (delegates)  |---> ConductResearch  (deep-dive sub-agent)
+   |                  |---> DiscoverOpportunities  (broad exploratory sub-agent)
+   |                  |---> refine_draft_report  (rewrites draft with new findings)
+   |                  |---> think_tool  (LLM reflection)
+   |
+   +---> ResearchComplete  (exits loop)
+```
+
+**How each iteration works:**
+
+1. The **supervisor** node receives the current draft, research brief, collected findings, and elapsed time. It decides what to research next.
+2. The **supervisor_tools** node executes the supervisor's tool calls:
+   - `ConductResearch` / `DiscoverOpportunities` spawn sub-agents that run **in parallel** (up to 4 research + 2 discovery agents concurrently).
+   - Each sub-agent returns compressed findings which are appended to the shared `notes` list.
+   - `refine_draft_report` rewrites the draft report incorporating the new findings.
+3. Control returns to the supervisor for the next iteration, or the loop exits when `ResearchComplete` is called.
+
+**Constraints**: max 15 iterations, hard timeout of 17 minutes, configurable min/max research time.
+
+### Stage 2a -- Sub-agents
+
+**File**: `researcher_agent.py`
+
+Both research and discovery agents share the same graph structure but differ in their tool sets and prompts:
+
+```
+llm_call  <-->  tool_node
+   |
+   v
+compress_research  (synthesizes raw findings into a structured summary)
+```
+
+**Research agent tools**: `tavily_search`, `think_tool`, `get_reddit_post`, `google_search_grounding`, `get_subreddit_posts`, `search_term_in_subreddit`
+
+**Discovery agent tools**: all research tools plus `search_substack`, `read_substack_article`
+
+Each sub-agent has a 10-minute timeout. Results are compressed into a findings summary with inline citations and a sources list before being returned to the supervisor.
+
+### Stage 3 -- Final report generation
+
+**File**: `research_agent_full.py`
+
+The `final_report_generation` node receives the research brief, all collected findings, and the refined draft report. It produces a comprehensive markdown report with:
+- Inline `[1]`, `[2]` citations
+- A `CitationPlanList` for ordering sources
+- A `## Sources` section at the end
+
+After generation, a **citation validation** step checks that inline citations match the sources list. If validation fails, a single LLM repair pass is attempted. If the repair is rejected (e.g., body length shrank too much), the original report is kept as-is.
+
+### Stage 4 -- Subtopic generation (optional)
+
+Enabled via `ENABLE_SUBTOPIC_GENERATION` in config.
+
+1. `subtopic_evaluation`: an LLM reviews the final report and research topics to decide whether any sub-topics deserve dedicated deep-dive reports. Uses tool calls (`GenerateSubtopicReport` / `EndSubtopicEvaluation`) to express its decisions.
+2. `subtopic_generation`: for each approved subtopic, generates a full report from the collected research notes. All subtopic reports are generated **in parallel**.
+
+### Data flow summary
+
+```
+AgentState carries these key fields through the pipeline:
+
+  messages              -- user conversation history
+  research_brief        -- structured research question (set in Stage 1)
+  draft_report          -- evolving draft (set in Stage 1, refined in Stage 2)
+  supervisor_messages   -- supervisor conversation log
+  notes                 -- compressed findings from sub-agents (accumulated in Stage 2)
+  raw_notes             -- unprocessed sub-agent notes
+  final_report          -- citation-backed output (set in Stage 3)
+  secondary_reports     -- optional subtopic reports (set in Stage 4)
+```

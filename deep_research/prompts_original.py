@@ -811,21 +811,17 @@ Format the report in clear markdown with proper structure and include source ref
 """
 
 draft_report_generation_prompt = """
-You are acting as a writer who is following a strategic plan to create an initial draft report.
-Here is the Research Brief and the Strategic Plan you must follow:
+You are acting as a writer creating an initial draft report based on a research brief.
+Here is the Research Brief you must address:
 
 <Research Brief>
 {research_brief}
 </Research Brief>
 
-<Strategic Plan>
-{report_plan}
-</Strategic Plan>
-
 Today's date is {date}.
 
 <Critical Instructions>
-1. **Follow the Plan**: Your draft MUST reflect the structure and themes defined in the Strategic Plan.
+1. **Address the Brief**: Your draft MUST address the key questions, dimensions, and themes identified in the Research Brief.
 2. **Drafting Only**: This is an initial draft. Use your internal knowledge to build the core arguments, but do NOT invent specific facts or citations.
 3. **No Hallucinated Citations**: Since research hasn't started yet, do NOT attempt to include [1], [2] style citations. Focus on the logical flow and placeholders.
 4. **Tone**: Maintain a professional, objective, and detailed tone.
@@ -876,8 +872,8 @@ For each section of the report, do the following:
 - Do not say what you are doing in the report. Just write the report without any commentary from yourself.
 
 - Each section should be as long as necessary to deeply answer the question with the information you have gathered. It is expected that sections will be fairly long and verbose. You are writing a deep research report, and users will expect a thorough answer.
-- **Draw on Examples**: Use your internal knowledge to provide illustrative examples or historical parallels that clarify the concepts in the Strategic Plan. These help set the stage for the specific research findings later.
-- Carefully suporting claims, arguments and analysis with citations and examples is essential.
+- **Draw on Examples**: Use your internal knowledge to provide illustrative examples or historical parallels that clarify the concepts in the research brief. These help set the stage for the specific research findings later.
+- Carefully supporting claims, arguments and analysis with clear reasoning and examples is essential.
 - Use bullet points to list out information when appropriate, but by default, write in paragraph form.
 
 <Quality Pillars>
@@ -886,7 +882,7 @@ Even for a draft, structure your report to support these four dimensions:
 1. **Comprehensiveness**: Outline all relevant angles. Note [RESEARCH_NEEDED] where data gaps exist. This is a big part of the quality of the report as the user will expect a thorough answer.
 2. **Insight**: Frame arguments to enable original analysis once research is gathered.
 3. **Credibility**: Verifiable sources and consider the credibility of the information.
-4. **Instruction Following**: Align sections directly to the Strategic Plan and research brief.
+4. **Instruction Following**: Align sections directly to the research brief.
 5. **Readability**: Establish clear logical flow with well-defined sections.
 </Quality Pillars>
 
@@ -894,18 +890,7 @@ REMEMBER:
 The brief and research may be in English, but you need to translate this information to the right language when writing the final answer.
 Make sure the final answer report is in the SAME language as the human messages in the message history.
 
-Format the report in clear markdown with proper structure and include source references where appropriate.
-
-<Citation Rules>
-- Assign each unique URL a single citation number in your text
-- End with ### Sources that lists each source with corresponding numbers
-- IMPORTANT: Number sources sequentially without gaps (1,2,3,4...) in the final list regardless of which sources you choose
-- Each source should be a separate line item in a list, so that in markdown it is rendered as a list.
-- Example format:
-  [1] Source Title: URL
-  [2] Source Title: URL
-- Citations are extremely important. Make sure to include these, and pay a lot of attention to getting these right. Users will often use these citations to look into more information.
-</Citation Rules>
+Format the report in clear markdown with proper structure. Do not include numbered citations in this draft stage.
 """
 
 report_planning_prompt = """

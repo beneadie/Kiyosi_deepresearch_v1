@@ -37,8 +37,6 @@ class AgentState(MessagesState):
     raw_notes: Annotated[list[str], operator.add] = []
     # Processed and structured notes ready for report generation
     notes: Annotated[list[str], operator.add] = []
-    # Plan for the report structure
-    report_plan: Optional[str] = None
     # Draft research report
     draft_report: str
     # Final formatted research report
@@ -77,13 +75,6 @@ class DraftReport(BaseModel):
 
     draft_report: str = Field(
         description="A draft report that will be used to guide the research.",
-    )
-
-class ReportPlan(BaseModel):
-    """Schema for structured report planning."""
-
-    report_plan: str = Field(
-        description="A detailed plan for the research report.",
     )
 
 # ===== SUBTOPIC EVALUATION TOOLS =====

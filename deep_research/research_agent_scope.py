@@ -17,8 +17,8 @@ from langchain_core.messages import HumanMessage, get_buffer_string
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
 
-from deep_research.prompts import transform_messages_into_research_topic_human_msg_prompt, draft_report_generation_prompt, clarify_with_user_instructions, report_planning_prompt
-from deep_research.state_scope import AgentState, ResearchQuestion, AgentInputState, ReportPlan
+from deep_research.prompts import transform_messages_into_research_topic_human_msg_prompt, draft_report_generation_prompt, clarify_with_user_instructions
+from deep_research.state_scope import AgentState, ResearchQuestion, AgentInputState
 from deep_research.config import get_resilient_model
 from deep_research.utils import extract_text_from_response
 
@@ -69,7 +69,7 @@ def clarify_with_user(state: AgentState) -> Command[Literal["write_research_brie
         goto="write_research_brief"
     )
 
-def write_research_brief(state: AgentState) -> Command[Literal["plan_report"]]:
+def write_research_brief(state: AgentState) -> Command[Literal["write_draft_report"]]:
     """
     Transform the conversation history into a comprehensive research brief.
 
@@ -86,30 +86,11 @@ def write_research_brief(state: AgentState) -> Command[Literal["plan_report"]]:
             date=get_today_str()
         ))
     ])
-    # Update state with generated research brief and pass it to the supervisor
+    # Update state with generated research brief and pass it to the draft writer
     return Command(
-            goto="plan_report",
+            goto="write_draft_report",
             update={"research_brief": response.research_brief}
         )
-
-def plan_report(state: AgentState) -> Command[Literal["write_draft_report"]]:
-    """
-    Create a detailed plan for the report before writing it.
-    """
-    structured_output_model = model.with_structured_output(ReportPlan)
-
-    response = structured_output_model.invoke([
-        HumanMessage(content=report_planning_prompt.format(
-            research_brief=state.get("research_brief", ""),
-            date=get_today_str()
-        ))
-    ])
-    #print(response.report_plan)
-
-    return Command(
-        goto="write_draft_report",
-        update={"report_plan": response.report_plan}
-    )
 
 async def write_draft_report(state: AgentState) -> Command[Literal["__end__"]]:
     """
@@ -118,11 +99,9 @@ async def write_draft_report(state: AgentState) -> Command[Literal["__end__"]]:
     Synthesizes all research findings into a comprehensive final report
     """
     research_brief = state.get("research_brief", "")
-    report_plan = state.get("report_plan", "")
 
     draft_report_prompt = draft_report_generation_prompt.format(
         research_brief=research_brief,
-        report_plan=report_plan,
         date=get_today_str()
     )
 
@@ -137,7 +116,6 @@ async def write_draft_report(state: AgentState) -> Command[Literal["__end__"]]:
         "research_brief": research_brief,
         "draft_report": draft_report,
         "supervisor_messages": [
-            "Here is the report plan: " + report_plan,
             "Here is the draft report: " + draft_report,
             research_brief
         ]
@@ -151,13 +129,11 @@ deep_researcher_builder = StateGraph(AgentState, input_schema=AgentInputState)
 # Add workflow nodes
 deep_researcher_builder.add_node("clarify_with_user", clarify_with_user)
 deep_researcher_builder.add_node("write_research_brief", write_research_brief)
-deep_researcher_builder.add_node("plan_report", plan_report)
 deep_researcher_builder.add_node("write_draft_report", write_draft_report)
 
 # Add workflow edges
 deep_researcher_builder.add_edge(START, "clarify_with_user")
-deep_researcher_builder.add_edge("write_research_brief", "plan_report")
-deep_researcher_builder.add_edge("plan_report", "write_draft_report")
+deep_researcher_builder.add_edge("write_research_brief", "write_draft_report")
 deep_researcher_builder.add_edge("write_draft_report", END)
 
 # Compile the workflow
