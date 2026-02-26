@@ -10,22 +10,28 @@ Examples:
     - OpenAI: "gpt-5", "gpt-5-mini"
     - Anthropic: "claude-4-5-opus", "claude-4-5-sonnet"
     - Google Gemini: "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"
-    - Cerebras: "zai-glm-4.7", "qwen-3-32b", "qwen-3-235b-a22b-instruct-2507"
+    - Z.AI GLM: "glm-5"
+    - Cerebras: "qwen-3-32b", "qwen-3-235b-a22b-instruct-2507"
 """
 
 import os
 from langchain.chat_models import init_chat_model
 from langchain_cerebras import ChatCerebras
+from langchain_openai import ChatOpenAI
 
 # ===== CONFIGURATION =====
 # Change this single variable to switch models across the entire application
 DEFAULT_MODEL = "gemini-3-flash-preview"#"gemini-3-pro-preview"
 
+# Supervisor model can be configured independently from subagents.
+# Defaults to OpenAI GPT-5.2 unless overridden via environment variable.
+SUPERVISOR_MODEL = os.environ.get("SUPERVISOR_MODEL", "gpt-5.2")
+
 # Select the model for simple tasks like summarization
 LITE_MODEL = "gemini-2.5-flash-lite"
 
 # Select the prompt version to use ("ORIGINAL" or "FINANCE_V1")
-PROMPT_VERSION = "FINANCE_V1"
+PROMPT_VERSION = "ORIGINAL"
 
 # Research time window (in minutes) - controls the expected task duration
 RESEARCH_TIME_MIN_MINUTES = 5
@@ -47,14 +53,34 @@ SAVE_REPORT_TO_FILE: bool = True  # Set to False to keep everything in memory on
 # Controls whether the subtopic evaluation and generation workflow runs after the final report
 ENABLE_SUBTOPIC_GENERATION: bool = False  # Set to False to skip subtopic reports entirely
 
+# Controls whether supervisor-subagent research trace logging/compression is enabled
+# Set DISABLE_RESEARCH_TRACE=1/true/yes/on to disable trace generation
+ENABLE_RESEARCH_TRACE: bool = os.environ.get("DISABLE_RESEARCH_TRACE", "").strip().lower() not in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 # Model fallback chain for rate limiting resilience
 # Tried in order: if primary fails with rate limit, try next in chain
 # NOTE: Swap order if a model is exhausted for the day
-MODEL_FALLBACK_CHAIN = [          
+MODEL_FALLBACK_CHAIN = [
     "gemini-3-flash-preview",  # Fallback 1
     "gemini-2.5-pro",           # Fallback 2: most stable
     "gemini-3-pro-preview",     # Primary (flash is exhausted)
 ]
+
+# Optional supervisor-specific fallback chain.
+# If SUPERVISOR_MODEL_FALLBACK_CHAIN is unset, defaults to SUPERVISOR_MODEL.
+# Example env value: "claude-4-5-sonnet,gpt-5-mini,gemini-2.5-pro"
+_supervisor_chain_env = os.environ.get("SUPERVISOR_MODEL_FALLBACK_CHAIN", "").strip()
+if _supervisor_chain_env:
+    SUPERVISOR_MODEL_FALLBACK_CHAIN = [
+        m.strip() for m in _supervisor_chain_env.split(",") if m.strip()
+    ]
+else:
+    SUPERVISOR_MODEL_FALLBACK_CHAIN = [SUPERVISOR_MODEL]
 
 
 
@@ -90,9 +116,20 @@ def get_model(model_name: str = DEFAULT_MODEL, temperature: float = 0, max_token
     """
     model_lower = model_name.lower()
 
-    # Cerebras models (GLM and Qwen via Cerebras API)
-    # Supported models: zai-glm-4.6, zai-glm-4.7, qwen-3-32b, qwen-3-235b-a22b-instruct-2507
-    if any(x in model_lower for x in ["glm", "qwen"]):
+    # Z.AI GLM models (OpenAI-compatible API)
+    if "glm" in model_lower:
+        kwargs = {
+            "model": model_name,
+            "api_key": os.getenv("ZHIPUAI_API_KEY"),
+            "base_url": "https://api.z.ai/api/paas/v4/",
+            "temperature": temperature,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        return ChatOpenAI(**kwargs)
+
+    # Cerebras models (Qwen)
+    if "qwen" in model_lower:
         kwargs = {
             "model": model_name,
             "temperature": temperature,
@@ -136,7 +173,7 @@ def get_model(model_name: str = DEFAULT_MODEL, temperature: float = 0, max_token
     raise ValueError(
         f"Cannot determine provider for model: {model_name}. "
         f"Supported providers: OpenAI (gpt-*), Anthropic (claude-*), "
-        f"Google (gemini-*), Cerebras (glm-*, qwen-*)"
+        f"Google (gemini-*), Z.AI (glm-*), Cerebras (qwen-*)"
     )
 
 
@@ -184,7 +221,12 @@ from langchain_core.runnables import RunnableWithFallbacks
 _fallback_logger = logging.getLogger("model_fallback")
 
 
-def get_resilient_model(tools: list = None, max_tokens: int = None, temperature: float = 0):
+def get_resilient_model(
+    tools: list = None,
+    max_tokens: int = None,
+    temperature: float = 0,
+    model_chain: list[str] | None = None,
+):
     """
     Get a model that automatically falls back to alternates on failure.
 
@@ -200,23 +242,32 @@ def get_resilient_model(tools: list = None, max_tokens: int = None, temperature:
         tools: Optional list of tools to bind to the models
         max_tokens: Optional max tokens for generation
         temperature: Temperature for generation (default: 0)
+        model_chain: Optional explicit model chain (ordered primary -> fallbacks)
 
     Returns:
         A Runnable capable of falling back to alternate models
     """
-    # Import exception types from google.genai SDK
-    # These are the actual exceptions raised for 429/503 errors
-    from google.genai.errors import ClientError, ServerError, APIError
+    # Import exception types from google.genai SDK when available.
+    # Keep a generic Exception fallback for non-Google providers.
+    try:
+        from google.genai.errors import ClientError, ServerError, APIError
+        exceptions_to_handle = (ClientError, ServerError, APIError, Exception)
+    except Exception:
+        exceptions_to_handle = (Exception,)
+
+    chain = model_chain or MODEL_FALLBACK_CHAIN
+    if not chain:
+        raise ValueError("Model chain cannot be empty")
 
     # Create the primary model
-    primary_name = MODEL_FALLBACK_CHAIN[0]
+    primary_name = chain[0]
     primary_model = get_model(primary_name, temperature=temperature, max_tokens=max_tokens)
     if tools:
         primary_model = primary_model.bind_tools(tools)
 
     # Create the fallback chain
     fallbacks = []
-    for model_name in MODEL_FALLBACK_CHAIN[1:]:
+    for model_name in chain[1:]:
         fb = get_model(model_name, temperature=temperature, max_tokens=max_tokens)
         if tools:
             fb = fb.bind_tools(tools)
@@ -230,8 +281,18 @@ def get_resilient_model(tools: list = None, max_tokens: int = None, temperature:
     # - ClientError: 4xx errors including 429 RESOURCE_EXHAUSTED (rate limits)
     # - ServerError: 5xx errors including 503 UNAVAILABLE (model overloaded)
     # - Exception: Catch-all for any other errors
-    _fallback_logger.info(f"Created resilient model chain: {MODEL_FALLBACK_CHAIN}")
+    _fallback_logger.info(f"Created resilient model chain: {chain}")
     return primary_model.with_fallbacks(
         fallbacks,
-        exceptions_to_handle=(ClientError, ServerError, APIError, Exception)
+        exceptions_to_handle=exceptions_to_handle
+    )
+
+
+def get_supervisor_model(tools: list = None, max_tokens: int = None, temperature: float = 0):
+    """Get a resilient model runnable for the supervisor role only."""
+    return get_resilient_model(
+        tools=tools,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        model_chain=SUPERVISOR_MODEL_FALLBACK_CHAIN,
     )

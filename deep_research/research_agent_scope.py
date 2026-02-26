@@ -17,9 +17,9 @@ from langchain_core.messages import HumanMessage, get_buffer_string
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
 
-from deep_research.prompts import transform_messages_into_research_topic_human_msg_prompt, draft_report_generation_prompt, clarify_with_user_instructions
+from deep_research.prompts import transform_messages_into_research_topic_human_msg_prompt, draft_report_generation_prompt, clarify_with_user_instructions, example_report
 from deep_research.state_scope import AgentState, ResearchQuestion, AgentInputState
-from deep_research.config import get_resilient_model
+from deep_research.config import get_resilient_model, get_supervisor_model
 from deep_research.utils import extract_text_from_response
 
 # ===== UTILITY FUNCTIONS =====
@@ -30,9 +30,9 @@ def get_today_str() -> str:
 
 # ===== CONFIGURATION =====
 
-# Initialize model with fallback chain for resilience
-model = get_resilient_model()
-creative_model = get_resilient_model()
+# Initialize models on the supervisor chain so scoping + drafting use supervisor LLM
+model = get_supervisor_model()
+creative_model = get_supervisor_model()
 
 # ===== WORKFLOW NODES =====
 
@@ -102,7 +102,8 @@ async def write_draft_report(state: AgentState) -> Command[Literal["__end__"]]:
 
     draft_report_prompt = draft_report_generation_prompt.format(
         research_brief=research_brief,
-        date=get_today_str()
+        date=get_today_str(),
+        example_report=example_report
     )
 
     # Generate long-form text directly (avoid structured JSON wrapping for large payloads)

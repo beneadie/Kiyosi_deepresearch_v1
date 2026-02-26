@@ -35,12 +35,12 @@ from deep_research.state_scope import (
 )
 from deep_research.research_agent_scope import clarify_with_user, write_research_brief, write_draft_report
 from deep_research.multi_agent_supervisor import supervisor_agent
-from deep_research.config import get_writer_model, SAVE_REPORT_TO_FILE, ENABLE_SUBTOPIC_GENERATION, get_resilient_model
+from deep_research.config import SAVE_REPORT_TO_FILE, ENABLE_SUBTOPIC_GENERATION, get_resilient_model, get_supervisor_model
 
 # ===== Config =====
 
 # Create resilient models for the full pipeline
-resilient_writer = get_resilient_model(max_tokens=40000)
+resilient_writer = get_supervisor_model(max_tokens=40000)
 subtopic_tools = [GenerateSubtopicReport, EndSubtopicEvaluation]
 # Note: Tools bound to each model in the fallback chain
 resilient_subtopic_model = get_resilient_model(tools=subtopic_tools, max_tokens=40000)

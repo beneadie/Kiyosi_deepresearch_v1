@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from deep_research.config import LOG_MODE
+from deep_research.config import ENABLE_RESEARCH_TRACE, LOG_MODE
 
 # Global variable to store the current run's log folder
 _current_log_folder: Optional[Path] = None
@@ -290,6 +290,9 @@ def log_trace_delegation(research_topic: str) -> int:
     Returns:
         The loop index for this delegation (use to update with findings later)
     """
+    if not ENABLE_RESEARCH_TRACE:
+        return -1
+
     global _research_trace
     loop_entry = {
         "loop_number": len(_research_trace) + 1,
@@ -309,6 +312,9 @@ def log_trace_findings(loop_index: int, findings: str) -> None:
         loop_index: The index returned by log_trace_delegation
         findings: The compressed research findings from the subagent
     """
+    if not ENABLE_RESEARCH_TRACE:
+        return
+
     global _research_trace
     if 0 <= loop_index < len(_research_trace):
         _research_trace[loop_index]["findings"] = findings
@@ -322,6 +328,9 @@ def log_trace_supervisor_reaction(reaction: str) -> None:
     Args:
         reaction: The think_tool reflection content
     """
+    if not ENABLE_RESEARCH_TRACE:
+        return
+
     global _research_trace
     # Find the most recent loop without a reaction
     for loop in reversed(_research_trace):
@@ -341,4 +350,6 @@ def get_research_trace() -> list:
         - findings: What the subagent returned
         - supervisor_reaction: The supervisor's think_tool reflection (if any)
     """
+    if not ENABLE_RESEARCH_TRACE:
+        return []
     return _research_trace.copy()

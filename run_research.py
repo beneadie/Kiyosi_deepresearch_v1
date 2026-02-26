@@ -43,7 +43,14 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from deep_research.research_agent_full import deep_researcher_builder
 
-from deep_research.config import DEFAULT_MODEL, OUTPUT_MODE, RESEARCH_TIME_MIN_MINUTES, RESEARCH_TIME_MAX_MINUTES, get_resilient_model
+from deep_research.config import (
+    DEFAULT_MODEL,
+    ENABLE_RESEARCH_TRACE,
+    OUTPUT_MODE,
+    RESEARCH_TIME_MIN_MINUTES,
+    RESEARCH_TIME_MAX_MINUTES,
+    get_resilient_model,
+)
 from deep_research.observability import init_run_folder, aggregate_sources, get_research_trace, clear_research_trace
 from deep_research.utils import extract_text_from_response
 from deep_research.prompts import research_trace_compression_prompt
@@ -217,12 +224,12 @@ async def run_research(prompt: str, output_dir: Path, thread_id: str = None, cle
 
         logger.info("Research complete!")
 
-        # Generate research trace content (ALWAYS - for programmatic access)
+        # Generate research trace content (if enabled)
         trace_content = None
         trace_file = None
-        trace_data = get_research_trace()
+        trace_data = get_research_trace() if ENABLE_RESEARCH_TRACE else []
 
-        if trace_data:
+        if ENABLE_RESEARCH_TRACE and trace_data:
             # Format raw interaction log for the prompt
             interaction_log = ""
             for loop in trace_data:
@@ -269,6 +276,8 @@ SUPERVISOR REACTION:
                 with open(trace_file, "w", encoding="utf-8") as f:
                     f.write(trace_content)
                 logger.info(f"Research trace saved to: {trace_file}")
+        elif not ENABLE_RESEARCH_TRACE:
+            logger.info("Research trace generation disabled via configuration")
 
         # Add trace content to output_data for DB/API usage
         output_data["trace_content"] = trace_content

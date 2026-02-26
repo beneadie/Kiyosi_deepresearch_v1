@@ -36,7 +36,7 @@ from deep_research.state_multi_agent_supervisor import (
     DiscoverOpportunities
 )
 from deep_research.utils import get_today_str, think_tool, refine_draft_report
-from deep_research.config import get_primary_model, RESEARCH_STRICT_TIMEOUT_MINUTES, MAX_RESEARCHER_ITERATIONS, SUBAGENT_TIMEOUT_SECONDS, get_resilient_model
+from deep_research.config import RESEARCH_STRICT_TIMEOUT_MINUTES, MAX_RESEARCHER_ITERATIONS, SUBAGENT_TIMEOUT_SECONDS, get_supervisor_model
 import time
 from deep_research.observability import log_conductor_turn, log_sub_agent, log_trace_delegation, log_trace_findings, log_trace_supervisor_reaction
 from deep_research.console_logger import Colors
@@ -76,8 +76,8 @@ except ImportError:
 # ===== CONFIGURATION =====
 
 supervisor_tools = [ConductResearch, ResearchComplete, DiscoverOpportunities, think_tool, refine_draft_report]
-# Get a model that automatically falls back to alternates
-supervisor_model_with_tools = get_resilient_model(tools=supervisor_tools)
+# Get a supervisor-specific resilient model chain
+supervisor_model_with_tools = get_supervisor_model(tools=supervisor_tools)
 
 # System constants
 # Maximum number of tool call iterations for individual researcher agents
